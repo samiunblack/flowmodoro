@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flowmo Focus</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { background-color: #0f101a; color: white; font-family: 'Inter', sans-serif; }
+        .timer-ring { transition: stroke-dashoffset 1s linear; transform: rotate(-90deg); transform-origin: 50% 50%; }
+        .tab-slider { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        select { -webkit-appearance: none; appearance: none; }
+        .content-fade { animation: fadeIn 0.2s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        function Flowmodoro() {
+            const [tab, setTab] = useState('timer');
+            const [tasks, setTasks] = useState(() => JSON.parse(localStorage.getItem('flowTasks')) || []);
+            const [activeTaskId, setActiveTaskId] = useState(() => localStorage.getItem('activeTaskId') || "");
+            const [history, setHistory] = useState(() => JSON.parse(localStorage.getItem('flowHistory')) || []);
+            
+            const [mode, setMode] = useState(() => localStorage.getItem('flowMode') || 'idle');
+            const [seconds, setSeconds] = useState(() => parseInt(localStorage.getItem('flowSeconds')) || 0);
+            const [breakTotal, setBreakTotal] = useState(() => parseInt(localStorage.getItem('breakTotal')) || 0);
+            const [focusStart, setFocusStart] = useState(null);
+
+            const timerRef = useRef(null);
+            const circleLength = 754;
+
+            useEffect(() => {
+                localStorage.setItem('flowTasks', JSON.stringify(tasks));
+                localStorage.setItem('activeTaskId', activeTaskId);
+                localStorage.setItem('flowMode', mode);
+                localStorage.setItem('flowSeconds', seconds);
+                localStorage.setItem('breakTotal', breakTotal);
+                localStorage.setItem('flowHistory', JSON.stringify(history));
+            }, [tasks, activeTaskId, mode, seconds, breakTotal, history]);
+
+            useEffect(() => {
+                if (mode === 'focusing' || mode === 'breaking') {
+                    timerRef.current = setInterval(() => {
+                        setSeconds(prev => {
+                            if (mode === 'breaking') {
+                                if (prev <= 1) { resetTimer(); return 0; }
+                                return prev - 1;
+                            }
+                            return prev + 1;
+                        });
+                    }, 1000);
+                } else {
+                    clearInterval(timerRef.current);
+                }
+                return () => clearInterval(timerRef.current);
+            }, [mode]);
+
+            const handleMainAction = () => {
+                if (mode === 'idle') {
+                    setMode('focusing');
+                    setSeconds(0);
+                    setFocusStart(new Date().toISOString());
+                } else if (mode === 'focusing') {
+                    // Log the session before starting break
+                    const session = {
+                        id: Date.now(),
+                        taskName: tasks.find(t => t.id === activeTaskId)?.content || "General Focus",
+                        start: focusStart || new Date().toISOString(),
+                        end: new Date().toISOString(),
+                        duration: seconds
+                    };
+                    setHistory(prev => [...prev, session]);
+
+                    const earnedBreak = Math.floor(seconds / 5);
+                    setSeconds(earnedBreak);
+                    setBreakTotal(earnedBreak);
+                    setMode('break_pending');
+                } else if (mode === 'break_pending') {
+                    setMode('breaking');
+                } else if (mode === 'breaking') {
+                    resetTimer();
+                }
+            };
+
+            const resetTimer = () => {
+                setMode('idle');
+                setSeconds(0);
+            };
+
+            const clearAllTasks = () => {
+                if(confirm("Are you sure you want to delete all tasks?")) {
+                    setTasks([]);
+                    setActiveTaskId("");
+                }
+            };
+
+            const formatTime = (s) => {
+                const mins = Math.floor(s / 60);
+                const secs = s % 60;
+                return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+            };
+
+            const strokeOffset = mode === 'focusing' || mode === 'idle' 
+                ? circleLength 
+                : mode === 'break_pending' 
+                    ? 0 
+                    : circleLength - (seconds / breakTotal) * circleLength;
+
+            return (
+                <div className="min-h-screen flex flex-col items-center justify-center p-4">
+                    {/* Persistent Navigation Link */}
+                    <div className="mb-8">
+                        <a href="stats.html" className="text-gray-500 hover:text-purple-400 transition-colors text-sm font-medium tracking-widest uppercase">
+                            View Stats ↗
+                        </a>
+                    </div>
+
+                    <div className="w-full max-w-md">
+                        {/* Tab Switcher */}
+                        <div className="relative flex bg-[#1a1c2e] p-1 rounded-xl mb-4 border border-white/5 overflow-hidden shadow-lg">
+                            <div 
+                                className="absolute top-1 bottom-1 left-1 bg-[#2d2f45] rounded-lg w-[calc(50%-4px)] tab-slider"
+                                style={{ transform: tab === 'timer' ? 'translateX(0)' : 'translateX(100%)' }}
+                            ></div>
+                            <button onClick={() => setTab('timer')} className={`relative z-10 flex-1 py-2 text-sm font-medium transition-colors ${tab === 'timer' ? 'text-white' : 'text-gray-400'}`}>Timer</button>
+                            <button onClick={() => setTab('tasks')} className={`relative z-10 flex-1 py-2 text-sm font-medium transition-colors ${tab === 'tasks' ? 'text-white' : 'text-gray-400'}`}>Tasks</button>
+                        </div>
+
+                        {/* Main Card */}
+                        <div className="bg-[#1a1c2e] rounded-[32px] p-8 h-[580px] flex flex-col border border-white/5 shadow-2xl overflow-hidden">
+                            {tab === 'timer' ? (
+                                <div className="flex-1 flex flex-col items-center content-fade">
+                                    <div className="text-center mb-6 w-full h-16 flex flex-col justify-center">
+                                        <p className="text-[10px] uppercase tracking-[0.2em] text-gray-500 mb-1">Focusing On</p>
+                                        <div className="flex items-center justify-center gap-2">
+                                            <select 
+                                                value={activeTaskId} 
+                                                onChange={(e) => setActiveTaskId(e.target.value)}
+                                                className="bg-transparent text-white text-lg font-medium outline-none text-center cursor-pointer max-w-[280px] truncate"
+                                            >
+                                                <option value="" className="bg-[#1a1c2e]">Select a task...</option>
+                                                {tasks.filter(t => !t.done).map(t => (
+                                                    <option key={t.id} value={t.id} className="bg-[#1a1c2e]">{t.content}</option>
+                                                ))}
+                                            </select>
+                                            <span className="text-purple-500 text-sm">›</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="relative flex items-center justify-center my-auto">
+                                        <svg className="w-64 h-64">
+                                            <circle cx="128" cy="128" r="120" stroke="#25273c" strokeWidth="12" fill="transparent" />
+                                            <circle 
+                                                cx="128" cy="128" r="120" 
+                                                stroke={mode === 'focusing' ? "rgba(139, 92, 246, 0.1)" : "#b794f4"} 
+                                                strokeWidth="12" fill="transparent" 
+                                                strokeDasharray={circleLength}
+                                                strokeDashoffset={strokeOffset}
+                                                className="timer-ring" strokeLinecap="round" 
+                                            />
+                                        </svg>
+                                        <div className="absolute text-center">
+                                            <span className="text-sm font-bold tracking-widest text-gray-400 uppercase">
+                                                {(mode === 'breaking' || mode === 'break_pending') ? 'BREAK' : 'FOCUS'}
+                                            </span>
+                                            <div className="text-6xl font-bold tracking-tight my-1 tabular-nums">{formatTime(seconds)}</div>
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-auto pt-8 flex gap-4 h-24 items-center">
+                                        <button onClick={handleMainAction} className="bg-[#2d2f45] hover:bg-[#3a3d5a] p-5 rounded-2xl transition-all active:scale-95 shadow-lg">
+                                            {mode === 'focusing' ? 
+                                                <svg width="24" height="24" fill="white" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"/></svg> : 
+                                                <svg width="24" height="24" fill="white" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                            }
+                                        </button>
+                                        {(mode === 'break_pending' || mode === 'breaking') && (
+                                            <button onClick={resetTimer} className="bg-[#2d2f45]/50 hover:bg-[#2d2f45] p-5 rounded-2xl transition-all active:scale-95">
+                                                <svg width="24" height="24" fill="white" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex-1 flex flex-col h-full content-fade">
+                                    <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 mb-4 pr-1">
+                                        {tasks.length === 0 ? (
+                                            <div className="h-full flex items-center justify-center text-gray-600 italic text-sm">No tasks added yet...</div>
+                                        ) : (
+                                            tasks.map(task => (
+                                                <div key={task.id} className="flex items-center gap-4 bg-[#2d2f45]/40 p-4 rounded-2xl border border-white/5 transition-all hover:bg-[#2d2f45]/60 group">
+                                                    <div 
+                                                        onClick={() => setTasks(tasks.map(t => t.id === task.id ? {...t, done: !t.done} : t))}
+                                                        className={`w-6 h-6 rounded-full border-2 cursor-pointer flex items-center justify-center transition-all ${task.done ? 'bg-purple-500 border-purple-500' : 'border-gray-600 hover:border-purple-400'}`}
+                                                    >
+                                                        {task.done && <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M20.285 2l-11.285 11.567-5.286-5.011-3.714 3.716 9 8.728 15-15.285z"/></svg>}
+                                                    </div>
+                                                    <span className={`flex-1 text-sm ${task.done ? 'line-through text-gray-600' : 'text-gray-200'}`}>{task.content}</span>
+                                                    <button onClick={() => setTasks(tasks.filter(t => t.id !== task.id))} className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity font-bold px-2">×</button>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                    <div className="mt-auto pt-4 flex gap-2">
+                                        <div className="relative flex-1">
+                                            <input 
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' && e.target.value.trim()) {
+                                                        setTasks([...tasks, { id: Date.now().toString(), content: e.target.value, done: false }]);
+                                                        e.target.value = '';
+                                                    }
+                                                }}
+                                                type="text" placeholder="Enter task name" 
+                                                className="w-full bg-[#0f101a] border border-white/5 rounded-2xl px-5 py-4 text-sm focus:outline-none focus:border-purple-500/50 pr-10"
+                                            />
+                                            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-600 text-xl font-light pointer-events-none">+</span>
+                                        </div>
+                                        <button onClick={clearAllTasks} title="Clear all tasks" className="bg-[#2d2f45] hover:bg-red-900/40 p-4 rounded-2xl transition-colors group flex items-center justify-center">
+                                            <svg className="text-gray-400 group-hover:text-red-400 transition-colors" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<Flowmodoro />);
+    </script>
+</body>
+</html>
