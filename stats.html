@@ -8,6 +8,25 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCm-OAGL07_Or3aaElydMQQaoI85Y9r7wI",
+            authDomain: "time-management-3c08f.firebaseapp.com",
+            projectId: "time-management-3c08f",
+            storageBucket: "time-management-3c08f.firebasestorage.app",
+            messagingSenderId: "1096537766863",
+            appId: "1:1096537766863:web:bf06b130300970366270ba"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        window.db = getFirestore(app);
+        window.fs = { collection, onSnapshot, query, orderBy };
+    </script>
+
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         body { background-color: #0b0c14; color: white; font-family: 'Inter', sans-serif; }
@@ -21,12 +40,34 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useMemo } = React;
+        const { useState, useMemo, useEffect } = React;
 
         function StatsPage() {
-            const [history] = useState(() => JSON.parse(localStorage.getItem('flowHistory')) || []);
+            const [history, setHistory] = useState([]);
             const [viewType, setViewType] = useState('day');
             const [selectedDate, setSelectedDate] = useState(new Date());
+            const [loading, setLoading] = useState(true);
+
+            // Fetch History from Firebase
+            useEffect(() => {
+                if (!window.db) return;
+                
+                const q = window.fs.query(
+                    window.fs.collection(window.db, "flowHistory"), 
+                    window.fs.orderBy("start", "desc")
+                );
+
+                const unsubscribe = window.fs.onSnapshot(q, (snapshot) => {
+                    const historyData = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    setHistory(historyData);
+                    setLoading(false);
+                });
+
+                return () => unsubscribe();
+            }, []);
 
             const changeDate = (days) => {
                 const newDate = new Date(selectedDate);
@@ -38,6 +79,7 @@
 
             const stats = useMemo(() => {
                 const filtered = history.filter(h => {
+                    if (!h.start) return false;
                     const hDate = new Date(h.start).toISOString().split('T')[0];
                     return viewType === 'day' ? hDate === formattedDateStr : true;
                 });
@@ -67,7 +109,7 @@
                     d.setDate(now.getDate() - i);
                     const dStr = d.toISOString().split('T')[0];
                     const mins = history
-                        .filter(h => new Date(h.start).toISOString().split('T')[0] === dStr)
+                        .filter(h => h.start && new Date(h.start).toISOString().split('T')[0] === dStr)
                         .reduce((acc, curr) => acc + curr.duration / 60, 0);
                     days.push({ date: dStr, value: mins });
                 }
@@ -82,6 +124,8 @@
                 return 'bg-purple-300';
             };
 
+            if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-500">Loading Analytics...</div>;
+
             return (
                 <div className="max-w-7xl mx-auto space-y-6">
                     {/* Header */}
@@ -93,7 +137,6 @@
                             <h1 className="text-xl font-bold">Analytics</h1>
                         </div>
 
-                        {/* Updated Date Navigator */}
                         <div className="flex items-center bg-[#161726] rounded-full px-4 py-2 border border-white/5 shadow-2xl">
                             <button onClick={() => changeDate(-1)} className="p-1 hover:text-purple-400 transition text-gray-400">
                                 <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
@@ -129,7 +172,7 @@
                             </div>
                         </div>
 
-                        {/* Summary Sidebar (Updated to match images) */}
+                        {/* Summary Sidebar */}
                         <div className="lg:col-span-4 space-y-4">
                             <div className="stat-card p-6 border border-white/5 shadow-lg">
                                 <div className="grid grid-cols-2 gap-4">
@@ -160,15 +203,19 @@
                                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest text-right">Time</span>
                                 </div>
                                 <div className="flex-1 overflow-y-auto no-scrollbar px-6 divide-y divide-white/5">
-                                    {Object.entries(stats.taskBreakdown).map(([name, time]) => (
-                                        <div key={name} className="py-4 grid grid-cols-2 items-center">
-                                            <span className="text-[11px] font-bold text-gray-300 truncate pr-4">{name}</span>
-                                            <span className="text-right text-[11px] font-bold text-white">
-                                                {time > 3600 ? `${Math.floor(time/3600)} hr ` : ''}
-                                                {Math.floor((time%3600)/60)} min
-                                            </span>
-                                        </div>
-                                    ))}
+                                    {Object.entries(stats.taskBreakdown).length === 0 ? (
+                                        <p className="text-center py-10 text-gray-600 text-xs">No data for this period</p>
+                                    ) : (
+                                        Object.entries(stats.taskBreakdown).map(([name, time]) => (
+                                            <div key={name} className="py-4 grid grid-cols-2 items-center">
+                                                <span className="text-[11px] font-bold text-gray-300 truncate pr-4">{name}</span>
+                                                <span className="text-right text-[11px] font-bold text-white">
+                                                    {time > 3600 ? `${Math.floor(time/3600)} hr ` : ''}
+                                                    {Math.floor((time%3600)/60)} min
+                                                </span>
+                                            </div>
+                                        ))
+                                    )}
                                 </div>
                             </div>
                         </div>
