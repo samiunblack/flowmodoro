@@ -8,26 +8,6 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, doc, setDoc, onSnapshot, collection, addDoc, deleteDoc, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-
-        const firebaseConfig = {
-            apiKey: "AIzaSyCm-OAGL07_Or3aaElydMQQaoI85Y9r7wI",
-            authDomain: "time-management-3c08f.firebaseapp.com",
-            projectId: "time-management-3c08f",
-            storageBucket: "time-management-3c08f.firebasestorage.app",
-            messagingSenderId: "1096537766863",
-            appId: "1:1096537766863:web:bf06b130300970366270ba"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        window.db = getFirestore(app);
-        // Expose necessary functions to window for React to use
-        window.fs = { doc, setDoc, onSnapshot, collection, addDoc, deleteDoc, getDocs, writeBatch };
-    </script>
-
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { background-color: #0f101a; color: white; font-family: 'Inter', sans-serif; }
@@ -48,54 +28,27 @@
 
         function Flowmodoro() {
             const [tab, setTab] = useState('timer');
-            const [tasks, setTasks] = useState([]);
-            const [activeTaskId, setActiveTaskId] = useState("");
-            const [mode, setMode] = useState('idle');
-            const [seconds, setSeconds] = useState(0);
-            const [breakTotal, setBreakTotal] = useState(0);
+            const [tasks, setTasks] = useState(() => JSON.parse(localStorage.getItem('flowTasks')) || []);
+            const [activeTaskId, setActiveTaskId] = useState(() => localStorage.getItem('activeTaskId') || "");
+            const [history, setHistory] = useState(() => JSON.parse(localStorage.getItem('flowHistory')) || []);
+            
+            const [mode, setMode] = useState(() => localStorage.getItem('flowMode') || 'idle');
+            const [seconds, setSeconds] = useState(() => parseInt(localStorage.getItem('flowSeconds')) || 0);
+            const [breakTotal, setBreakTotal] = useState(() => parseInt(localStorage.getItem('breakTotal')) || 0);
             const [focusStart, setFocusStart] = useState(null);
-            const [loading, setLoading] = useState(true);
 
             const timerRef = useRef(null);
             const circleLength = 754;
 
-            // 1. Initial Sync from Firebase
             useEffect(() => {
-                if (!window.db) return;
+                localStorage.setItem('flowTasks', JSON.stringify(tasks));
+                localStorage.setItem('activeTaskId', activeTaskId);
+                localStorage.setItem('flowMode', mode);
+                localStorage.setItem('flowSeconds', seconds);
+                localStorage.setItem('breakTotal', breakTotal);
+                localStorage.setItem('flowHistory', JSON.stringify(history));
+            }, [tasks, activeTaskId, mode, seconds, breakTotal, history]);
 
-                // Sync Tasks
-                const unsubTasks = window.fs.onSnapshot(window.fs.collection(window.db, "flowTasks"), (snapshot) => {
-                    const tasksList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setTasks(tasksList);
-                    setLoading(false);
-                });
-
-                // Sync Timer State (stored in a 'settings' doc)
-                const unsubState = window.fs.onSnapshot(window.fs.doc(window.db, "appState", "current"), (doc) => {
-                    if (doc.exists()) {
-                        const data = doc.data();
-                        setMode(data.mode || 'idle');
-                        setSeconds(data.seconds || 0);
-                        setBreakTotal(data.breakTotal || 0);
-                        setActiveTaskId(data.activeTaskId || "");
-                    }
-                });
-
-                return () => { unsubTasks(); unsubState(); };
-            }, []);
-
-            // 2. Persist State Changes to Firebase (Debounced or selective)
-            useEffect(() => {
-                if (loading) return;
-                const updateState = async () => {
-                    await window.fs.setDoc(window.fs.doc(window.db, "appState", "current"), {
-                        mode, seconds, breakTotal, activeTaskId
-                    }, { merge: true });
-                };
-                updateState();
-            }, [mode, seconds, breakTotal, activeTaskId]);
-
-            // Timer Logic (Identical to your original)
             useEffect(() => {
                 if (mode === 'focusing' || mode === 'breaking') {
                     timerRef.current = setInterval(() => {
@@ -113,20 +66,21 @@
                 return () => clearInterval(timerRef.current);
             }, [mode]);
 
-            const handleMainAction = async () => {
+            const handleMainAction = () => {
                 if (mode === 'idle') {
                     setMode('focusing');
                     setSeconds(0);
                     setFocusStart(new Date().toISOString());
                 } else if (mode === 'focusing') {
-                    // Log session to Firebase flowHistory
+                    // Log the session before starting break
                     const session = {
+                        id: Date.now(),
                         taskName: tasks.find(t => t.id === activeTaskId)?.content || "General Focus",
                         start: focusStart || new Date().toISOString(),
                         end: new Date().toISOString(),
                         duration: seconds
                     };
-                    await window.fs.addDoc(window.fs.collection(window.db, "flowHistory"), session);
+                    setHistory(prev => [...prev, session]);
 
                     const earnedBreak = Math.floor(seconds / 5);
                     setSeconds(earnedBreak);
@@ -144,28 +98,9 @@
                 setSeconds(0);
             };
 
-            const toggleTask = async (id, currentDone) => {
-                await window.fs.setDoc(window.fs.doc(window.db, "flowTasks", id), { done: !currentDone }, { merge: true });
-            };
-
-            const deleteTask = async (id) => {
-                await window.fs.deleteDoc(window.fs.doc(window.db, "flowTasks", id));
-            };
-
-            const addTask = async (content) => {
-                await window.fs.addDoc(window.fs.collection(window.db, "flowTasks"), {
-                    content,
-                    done: false,
-                    createdAt: new Date().toISOString()
-                });
-            };
-
-            const clearAllTasks = async () => {
+            const clearAllTasks = () => {
                 if(confirm("Are you sure you want to delete all tasks?")) {
-                    const querySnapshot = await window.fs.getDocs(window.fs.collection(window.db, "flowTasks"));
-                    const batch = window.fs.writeBatch(window.db);
-                    querySnapshot.forEach((doc) => batch.delete(doc.ref));
-                    await batch.commit();
+                    setTasks([]);
                     setActiveTaskId("");
                 }
             };
@@ -182,10 +117,9 @@
                     ? 0 
                     : circleLength - (seconds / breakTotal) * circleLength;
 
-            if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-500">Loading Cloud Data...</div>;
-
             return (
                 <div className="min-h-screen flex flex-col items-center justify-center p-4">
+                    {/* Persistent Navigation Link */}
                     <div className="mb-8">
                         <a href="stats.html" className="text-gray-500 hover:text-purple-400 transition-colors text-sm font-medium tracking-widest uppercase">
                             View Stats ↗
@@ -193,6 +127,7 @@
                     </div>
 
                     <div className="w-full max-w-md">
+                        {/* Tab Switcher */}
                         <div className="relative flex bg-[#1a1c2e] p-1 rounded-xl mb-4 border border-white/5 overflow-hidden shadow-lg">
                             <div 
                                 className="absolute top-1 bottom-1 left-1 bg-[#2d2f45] rounded-lg w-[calc(50%-4px)] tab-slider"
@@ -202,6 +137,7 @@
                             <button onClick={() => setTab('tasks')} className={`relative z-10 flex-1 py-2 text-sm font-medium transition-colors ${tab === 'tasks' ? 'text-white' : 'text-gray-400'}`}>Tasks</button>
                         </div>
 
+                        {/* Main Card */}
                         <div className="bg-[#1a1c2e] rounded-[32px] p-8 h-[580px] flex flex-col border border-white/5 shadow-2xl overflow-hidden">
                             {tab === 'timer' ? (
                                 <div className="flex-1 flex flex-col items-center content-fade">
@@ -265,13 +201,13 @@
                                             tasks.map(task => (
                                                 <div key={task.id} className="flex items-center gap-4 bg-[#2d2f45]/40 p-4 rounded-2xl border border-white/5 transition-all hover:bg-[#2d2f45]/60 group">
                                                     <div 
-                                                        onClick={() => toggleTask(task.id, task.done)}
+                                                        onClick={() => setTasks(tasks.map(t => t.id === task.id ? {...t, done: !t.done} : t))}
                                                         className={`w-6 h-6 rounded-full border-2 cursor-pointer flex items-center justify-center transition-all ${task.done ? 'bg-purple-500 border-purple-500' : 'border-gray-600 hover:border-purple-400'}`}
                                                     >
                                                         {task.done && <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M20.285 2l-11.285 11.567-5.286-5.011-3.714 3.716 9 8.728 15-15.285z"/></svg>}
                                                     </div>
                                                     <span className={`flex-1 text-sm ${task.done ? 'line-through text-gray-600' : 'text-gray-200'}`}>{task.content}</span>
-                                                    <button onClick={() => deleteTask(task.id)} className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity font-bold px-2">×</button>
+                                                    <button onClick={() => setTasks(tasks.filter(t => t.id !== task.id))} className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity font-bold px-2">×</button>
                                                 </div>
                                             ))
                                         )}
@@ -281,7 +217,7 @@
                                             <input 
                                                 onKeyDown={(e) => {
                                                     if (e.key === 'Enter' && e.target.value.trim()) {
-                                                        addTask(e.target.value.trim());
+                                                        setTasks([...tasks, { id: Date.now().toString(), content: e.target.value, done: false }]);
                                                         e.target.value = '';
                                                     }
                                                 }}
